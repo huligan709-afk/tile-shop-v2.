@@ -5,7 +5,7 @@ const Database = require('better-sqlite3');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'change-me-123';
-const db = new Database(path.join(__dirname, 'data', 'shop.db'));
+const db = new Database(path.join(__dirname, 'shop.db'));
 db.pragma('journal_mode = WAL');
 
 db.exec(`
