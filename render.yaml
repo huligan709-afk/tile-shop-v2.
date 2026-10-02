@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: tile-shop
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: ADMIN_KEY
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: SHOP_NAME
+        value: Всё для плиточника
