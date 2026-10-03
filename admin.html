@@ -115,7 +115,20 @@ summary{cursor:pointer}
 </section>
 
 <section class="box">
-<h2>Товары</h2>
+<h2>Товары</h2><details style="margin-bottom:20px">
+  <summary>Импорт товаров из Excel</summary>
+  <p class="muted">
+    Файл .xlsx: до 500 товаров, до 2 МБ.
+    Колонки в первой строке: Название, Категория, Цена, Остаток.
+    Цена в рублях и остаток — целые числа от 0.
+    Уже существующие товары будут пропущены.
+  </p>
+  <label>Выберите файл Excel
+    <input id="importFile" type="file" accept=".xlsx">
+  </label>
+  <button id="importProducts" type="button">Загрузить товары</button>
+  <p id="importMsg" role="status" aria-live="polite"></p>
+</details>
 <label>Поиск
 <input id="search" type="search" placeholder="Название или категория">
 </label>
@@ -168,8 +181,9 @@ async function api(url,options={}){
   const response=await fetch(url,{
     ...options,
     headers:{
-      'Content-Type':'application/json',
-      'x-admin-key':key
+    'Content-Type':'application/json',
+...options.headers,
+'x-admin-key':key 
     }
   });
   const data=await response.json().catch(()=>({
@@ -178,7 +192,51 @@ async function api(url,options={}){
   if(!response.ok)throw Error(data.error||'Ошибка запроса');
   return data;
 }
+$('importProducts').addEventListener('click', async () => {
+  const button = $('importProducts');
+  const input = $('importFile');
+  const message = $('importMsg');
+  const file = input.files[0];
 
+  if (button.disabled) return;
+
+  if (!file || !/\.xlsx$/i.test(file.name)) {
+    message.textContent = 'Выберите файл .xlsx';
+    return;
+  }
+
+  if (file.size > 2 * 1024 * 1024) {
+    message.textContent = 'Файл должен быть не больше 2 МБ';
+    return;
+  }
+
+  button.disabled = true;
+  input.disabled = true;
+  message.textContent = 'Загружаем товары…';
+
+  try {
+    const result = await api('/api/products/import', {
+      method: 'POST',
+      headers: {
+        'Content-Type':
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      },
+      body: file
+    });
+
+    input.value = '';
+    message.textContent =
+      'Добавлено: ' + result.added +
+      '. Пропущено: ' + result.skipped + '.';
+
+    await load();
+  } catch (err) {
+    message.textContent = err.message;
+  } finally {
+    button.disabled = false;
+    input.disabled = false;
+  }
+});
 async function load(){
   $('msg').textContent='Загрузка…';
   $('refresh').disabled=true;
