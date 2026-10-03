@@ -223,13 +223,45 @@ function renderProducts(){
     </article>
   `).join('')||'<p>Товары не найдены</p>';
 }
+function orderContactButtons(o) {
+  const rawPhone = String(o.phone || '').trim();
+  let digits = rawPhone.replace(/\D/g, '');
 
+  if (digits.length === 11 && digits.startsWith('8')) {
+    digits = '7' + digits.slice(1);
+  }
+
+  const phone = digits
+    ? (rawPhone.startsWith('+') || digits.length === 11 ? '+' : '') + digits
+    : '';
+
+  const username = String(o.telegram_username || '').replace(/^@/, '');
+  const telegramId = String(o.telegram_id || '');
+
+  const telegramUrl = /^[a-zA-Z0-9_]{5,32}$/.test(username)
+    ? 'https://t.me/' + username
+    : /^[1-9]\d*$/.test(telegramId)
+      ? 'tg://user?id=' + telegramId
+      : '';
+
+  const style = 'display:inline-block;padding:12px 16px;' +
+    'background:#1686f5;color:white;border-radius:12px;' +
+    'text-decoration:none;font-weight:600';
+
+  return '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">' +
+    (phone ? '<a style="' + style + '" href="tel:' + phone +
+      '">☎️ Позвонить</a>' : '') +
+    (telegramUrl ? '<a style="' + style + '" href="' + telegramUrl +
+      '">✉️ Telegram</a>' : '') +
+    '</div>';
+}
 function renderOrders(rows){
   $('orders').innerHTML=rows.map(o=>`
     <article class="card">
       <h3>Заказ №${o.id} · ${money(o.total)}</h3>
       <p>${esc(o.customer_name)}<br>${esc(o.phone)}</p>
-      <label>Статус
+     ${orderContactButtons(o)}
+     <label>Статус
         <select data-order="${o.id}">
           ${statuses.map(s=>`
             <option${s===o.status?' selected':''}>${s}</option>
