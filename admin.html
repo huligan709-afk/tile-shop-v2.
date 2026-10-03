@@ -1,1 +1,407 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Админка — Всё для плиточника</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f7fa;color:#172638;margin:0}.wrap{max-width:1000px;margin:auto;padding:25px}.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.box{background:white;border:1px solid #e2e7ec;border-radius:18px;padding:18px;margin:15px 0}input,textarea,select{padding:11px;border:1px solid #dce2e8;border-radius:10px;width:100%;box-sizing:border-box;margin:5px 0 12px}button{padding:10px 14px;border:0;border-radius:10px;background:#1683f5;color:white;font-weight:700}table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px solid #eee;text-align:left}.muted{color:#7d8997}</style></head><body><div class="wrap"><h1>🧱 Админ-панель</h1><div class="box"><label>ADMIN_KEY</label><input id="key" type="password" placeholder="Введите ключ"><button onclick="loadAll()">Войти</button><span id="msg" class="muted"></span></div><div id="content"></div></div><script>let key='';async function api(u,o={}){o.headers={...(o.headers||{}),'x-admin-key':key,'Content-Type':'application/json'};let r=await fetch(u,o),d=await r.json();if(!r.ok)throw Error(d.error||'Ошибка');return d}async function loadAll(){key=document.getElementById('key').value;try{let [p,o]=await Promise.all([api('/api/products'),api('/api/orders')]);document.getElementById('content').innerHTML='<div class="box"><h2>Заказы</h2>'+(!o.length?'<p class="muted">Заказов пока нет</p>':'<table><tr><th>№</th><th>Клиент</th><th>Телефон</th><th>Сумма</th><th>Статус</th></tr>'+o.map(x=>`<tr><td>${x.id}</td><td>${x.customer_name}</td><td>${x.phone}</td><td>${x.total} ₽</td><td><select onchange="status(${x.id},this.value)">${['Новый','Принят','В работе','Готов','Выполнен','Отменён'].map(s=>`<option ${s===x.status?'selected':''}>${s}</option>`).join('')}</select></td></tr>`).join('')+'</table>')+'</div><div class="box"><h2>Товары</h2><p class="muted">Товаров: '+p.length+'</p><table><tr><th>ID</th><th>Название</th><th>Категория</th><th>Цена</th><th>Остаток</th></tr>'+p.map(x=>`<tr><td>${x.id}</td><td>${x.name}</td><td>${x.category}</td><td>${x.price} ₽</td><td>${x.stock}</td></tr>`).join('')+'</table></div>'}catch(e){document.getElementById('msg').textContent=e.message}}async function status(id,status){try{await api('/api/orders/'+id+'/status',{method:'PATCH',body:JSON.stringify({status})})}catch(e){alert(e.message)}}</script></body></html>
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Управление магазином</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f7fa;color:#172638;font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:900px;margin:auto;padding:16px}
+.box,.card{background:white;border:1px solid #e2e7ec;border-radius:16px;padding:16px;margin:12px 0}
+h1{font-size:26px}h2{font-size:22px}h3{margin:0 0 10px}
+input,textarea,select,button{font:inherit}
+input,textarea,select{width:100%;padding:12px;border:1px solid #ccd5df;border-radius:10px;margin:6px 0 14px}
+button{padding:12px;border:0;border-radius:10px;background:#1683f5;color:white;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5}
+.bar{display:flex;gap:10px;flex-wrap:wrap}
+.secondary{background:#e8edf3;color:#172638}
+.muted{color:#637386}
+.notice{white-space:pre-wrap;margin:12px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.photo{width:80px;height:80px;object-fit:cover;border-radius:10px;margin-bottom:10px}
+#preview{max-width:100%;max-height:180px}
+p{overflow-wrap:anywhere}
+label{display:block}
+details{margin:10px 0}
+summary{cursor:pointer}
+@media(max-width:500px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🧱 Управление магазином</h1>
+
+<form id="login" class="box">
+<label>Ключ администратора
+<input id="key" type="password" required autocomplete="current-password">
+</label>
+<button>Войти</button>
+</form>
+
+<p id="msg" class="notice" role="status"></p>
+
+<main id="content" hidden>
+<div class="bar">
+<button id="refresh">Обновить</button>
+<button id="add">Добавить товар</button>
+<button id="logout" class="secondary">Выйти</button>
+</div>
+
+<form id="editor" class="box" hidden>
+<h2 id="editTitle">Новый товар</h2>
+
+<label>Название
+<input name="name" required maxlength="300">
+</label>
+
+<label>Категория
+<input name="category" list="categories" required maxlength="100">
+</label>
+<datalist id="categories">
+<option value="Черновые материалы">
+<option value="Чистовые материалы">
+<option value="Расходники">
+<option value="Инструмент">
+</datalist>
+
+<label>Описание
+<textarea name="description" rows="3" maxlength="10000"></textarea>
+</label>
+
+<div class="grid">
+<label>Цена, ₽
+<input name="price" type="number" min="0" max="2147483647" step="1" required>
+</label>
+<label>Остаток
+<input name="stock" type="number" min="0" max="2147483647" step="1" required>
+</label>
+<label>Старая цена, ₽
+<input name="old_price" type="number" min="0" max="2147483647" step="1" value="0" required>
+</label>
+<label>Единица
+<input name="unit" value="шт." maxlength="50">
+</label>
+</div>
+
+<label>Бренд
+<input name="brand" maxlength="100">
+</label>
+
+<label>Ссылка на фото
+<input name="image" type="url" placeholder="https://…">
+</label>
+<p class="muted">Нужна прямая ссылка на изображение. Загрузка фото с телефона пока не поддерживается.</p>
+<img id="preview" alt="Предпросмотр фото" hidden referrerpolicy="no-referrer">
+
+<p id="saveMsg" class="notice" role="status"></p>
+<div class="bar">
+<button id="save">Сохранить товар</button>
+<button id="cancel" type="button" class="secondary">Закрыть форму</button>
+</div>
+</form>
+
+<section class="box">
+<h2>Заказы</h2>
+<div id="orders"></div>
+</section>
+
+<section class="box">
+<h2>Товары</h2>
+<label>Поиск
+<input id="search" type="search" placeholder="Название или категория">
+</label>
+<p id="count" class="muted"></p>
+<div id="products"></div>
+</section>
+</main>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({
+  '&':'&amp;',
+  '<':'&lt;',
+  '>':'&gt;',
+  '"':'&quot;',
+  "'":'&#39;'
+}[c]));
+const money=v=>Number(v).toLocaleString('ru-RU')+' ₽';
+const statuses=['Новый','Принят','В работе','Готов','Выполнен','Отменён'];
+
+let key='',products=[],editId=null,saving=false;
+
+function photoUrl(value){
+  try{
+    const u=new URL(value);
+    return ['https:','http:'].includes(u.protocol)?u.href:'';
+  }catch{
+    return '';
+  }
+}
+
+async function api(url,options={}){
+  const response=await fetch(url,{
+    ...options,
+    headers:{
+      'Content-Type':'application/json',
+      'x-admin-key':key
+    }
+  });
+  const data=await response.json().catch(()=>({
+    error:'Сервер вернул непонятный ответ. Повторите позже.'
+  }));
+  if(!response.ok)throw Error(data.error||'Ошибка запроса');
+  return data;
+}
+
+async function load(){
+  $('msg').textContent='Загрузка…';
+  $('refresh').disabled=true;
+  try{
+    const [p,o]=await Promise.all([
+      api('/api/products'),
+      api('/api/orders')
+    ]);
+    products=p;
+    renderProducts();
+    renderOrders(o);
+    $('content').hidden=false;
+    $('login').hidden=true;
+    $('msg').textContent='Данные обновлены';
+  }catch(e){
+    $('msg').textContent=e.message;
+  }finally{
+    $('refresh').disabled=false;
+  }
+}
+
+function renderProducts(){
+  const q=$('search').value.toLowerCase();
+  const rows=products.filter(p=>
+    (p.name+' '+p.category).toLowerCase().includes(q)
+  );
+  $('count').textContent='Товаров: '+products.length;
+  $('products').innerHTML=rows.map(p=>`
+    <article class="card">
+      ${photoUrl(p.image)?`
+        <img class="photo"
+          src="${esc(photoUrl(p.image))}"
+          alt="Фото товара"
+          loading="lazy"
+          referrerpolicy="no-referrer">
+      `:''}
+      <h3>${esc(p.name)}</h3>
+      <p>${esc(p.category)}</p>
+      <p><b>${money(p.price)}</b> · Остаток: ${esc(p.stock)} ${esc(p.unit)}</p>
+      <button data-edit="${p.id}">Редактировать</button>
+    </article>
+  `).join('')||'<p>Товары не найдены</p>';
+}
+
+function renderOrders(rows){
+  $('orders').innerHTML=rows.map(o=>`
+    <article class="card">
+      <h3>Заказ №${o.id} · ${money(o.total)}</h3>
+      <p>${esc(o.customer_name)}<br>${esc(o.phone)}</p>
+      <label>Статус
+        <select data-order="${o.id}">
+          ${statuses.map(s=>`
+            <option${s===o.status?' selected':''}>${s}</option>
+          `).join('')}
+        </select>
+      </label>
+      <p data-result role="status"></p>
+      <details>
+        <summary>Состав и доставка</summary>
+        <p>
+          Адрес: ${esc(o.address||'Не указан')}<br>
+          Комментарий: ${esc(o.comment||'Нет')}
+        </p>
+        ${(o.items||[]).map(i=>`
+          <p>${esc(i.name)} — ${i.qty} × ${money(i.price)}</p>
+        `).join('')}
+      </details>
+    </article>
+  `).join('')||'<p>Заказов пока нет</p>';
+
+  for(const select of $('orders').querySelectorAll('select')){
+    select.dataset.previous=select.value;
+  }
+}
+
+function openEditor(id=null){
+  const p=id===null?{
+    name:'',
+    category:'',
+    description:'',
+    price:0,
+    stock:0,
+    old_price:0,
+    unit:'шт.',
+    brand:'',
+    image:''
+  }:products.find(p=>p.id===id);
+
+  if(!p)return;
+  editId=id;
+  $('editor').reset();
+
+  for(const field of [
+    'name','category','description','price',
+    'stock','old_price','unit','brand','image'
+  ]){
+    $('editor').elements.namedItem(field).value=p[field]??'';
+  }
+
+  $('editTitle').textContent=id===null
+    ?'Новый товар'
+    :'Редактировать товар №'+id;
+
+  $('saveMsg').textContent='';
+  $('editor').hidden=false;
+  preview();
+  $('editor').scrollIntoView({behavior:'smooth'});
+}
+
+function preview(){
+  const url=photoUrl(
+    $('editor').elements.namedItem('image').value
+  );
+  $('preview').hidden=!url;
+  if(url)$('preview').src=url;
+  else $('preview').removeAttribute('src');
+}
+
+function closeEditor(){
+  $('editor').hidden=true;
+  editId=null;
+}
+
+function logout(){
+  key='';
+  products=[];
+  $('key').value='';
+  $('content').hidden=true;
+  $('login').hidden=false;
+  $('orders').replaceChildren();
+  $('products').replaceChildren();
+  $('editor').reset();
+  closeEditor();
+  $('msg').textContent='Вы вышли';
+}
+
+$('login').onsubmit=e=>{
+  e.preventDefault();
+  key=$('key').value;
+  load();
+};
+
+$('refresh').onclick=()=>{
+  if(!saving)load();
+};
+
+$('add').onclick=()=>{
+  if(!saving)openEditor();
+};
+
+$('logout').onclick=()=>{
+  if(!saving)logout();
+};
+
+$('cancel').onclick=()=>{
+  if(!saving)closeEditor();
+};
+
+$('search').oninput=renderProducts;
+
+$('editor').elements.namedItem('image').oninput=preview;
+
+$('products').onclick=e=>{
+  const button=e.target.closest('[data-edit]');
+  if(button&&!saving){
+    openEditor(Number(button.dataset.edit));
+  }
+};
+
+$('orders').onchange=async e=>{
+  const select=e.target;
+  if(!select.matches('[data-order]'))return;
+
+  const result=select.closest('article').querySelector('[data-result]');
+  select.disabled=true;
+  result.textContent='Сохранение…';
+
+  try{
+    await api('/api/orders/'+select.dataset.order+'/status',{
+      method:'PATCH',
+      body:JSON.stringify({status:select.value})
+    });
+    select.dataset.previous=select.value;
+    result.textContent='Статус сохранён';
+  }catch(e){
+    select.value=select.dataset.previous;
+    result.textContent=e.message;
+  }finally{
+    select.disabled=false;
+  }
+};
+
+$('editor').onsubmit=async e=>{
+  e.preventDefault();
+  if(saving)return;
+
+  const body=Object.fromEntries(new FormData($('editor')));
+
+  for(const field of ['price','stock','old_price']){
+    body[field]=Number(body[field]);
+    if(
+      !Number.isInteger(body[field])||
+      body[field]<0||
+      body[field]>2147483647
+    ){
+      $('saveMsg').textContent=
+        'Цена и остаток должны быть целыми неотрицательными числами';
+      return;
+    }
+  }
+
+  body.name=body.name.trim();
+  body.category=body.category.trim();
+
+  if(!body.name||!body.category){
+    $('saveMsg').textContent='Укажите название и категорию';
+    return;
+  }
+
+  if(body.image&&!photoUrl(body.image)){
+    $('saveMsg').textContent=
+      'Укажите ссылку на фото, начинающуюся с https:// или http://';
+    return;
+  }
+
+  const id=editId;
+  saving=true;
+  $('save').disabled=true;
+  $('cancel').disabled=true;
+  $('saveMsg').textContent='Сохранение…';
+
+  try{
+    await api('/api/products'+(id===null?'':'/'+id),{
+      method:id===null?'POST':'PATCH',
+      body:JSON.stringify(body)
+    });
+    closeEditor();
+    await load();
+    $('msg').textContent+=' · Товар сохранён';
+  }catch(e){
+    $('saveMsg').textContent=e.message;
+  }finally{
+    saving=false;
+    $('save').disabled=false;
+    $('cancel').disabled=false;
+  }
+};
+</script>
+</body>
+</html>
