@@ -4,7 +4,7 @@ const express = require('express');
 const path = require('path');
 const https = require('https');
 const { Pool } = require('pg');
-
+const ExcelJS = require('exceljs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY;
@@ -129,7 +129,14 @@ ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
     throw err;
   } finally { client.release(); }
 }
-
+app.post(
+  '/api/products/import',
+  admin,
+  express.raw({
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    limit: '2mb'
+  })
+);
 app.use(express.json({ limit: '1mb' }));
 const route = fn => (req, res, next) => Promise.resolve(fn(req, res)).catch(next);
 const cleanInt = v => Number.isSafeInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 2147483647 ? Number(v) : 0;
@@ -465,7 +472,104 @@ app.patch('/api/products/:id/visibility', admin, route(async (req, res) => {
   }
   res.json({ ok: true });
 }));
+app.post('/api/products/import', admin, route(async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) {
+    fail('Выберите файл Excel .xlsx');
+  }
 
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.load(req.body);
+  } catch {
+    fail('Не удалось прочитать файл .xlsx');
+  }
+
+  const sheet = workbook.worksheets[0];
+  if (!sheet) fail('В файле нет листа');
+  if (sheet.rowCount > 501) fail('Максимум 500 строк товаров');
+
+  const headers = new Map();
+  sheet.getRow(1).eachCell((cell, column) => {
+    const title = cell.text.trim().toLowerCase();
+    if (headers.has(title)) fail('Повтор колонки: ' + title);
+    headers.set(title, column);
+  });
+
+  const titles = ['название', 'категория', 'цена', 'остаток'];
+  for (const title of titles) {
+    if (!headers.has(title)) fail('Нет колонки: ' + title);
+  }
+
+  const rows = [];
+  for (let number = 2; number <= sheet.rowCount; number++) {
+    const row = sheet.getRow(number);
+    const values = titles.map(title =>
+      row.getCell(headers.get(title)).value
+    );
+    if (values.every(v => v == null || String(v).trim() === '')) {
+      continue;
+    }
+
+    if (values.some(v =>
+      v != null && typeof v !== 'string' && typeof v !== 'number'
+    )) {
+      fail('Строка ' + number + ': используйте значения без формул');
+    }
+
+    const [name, category, rawPrice, rawStock] =
+      values.map(v => String(v == null ? '' : v).trim());
+
+    if (!name || !category || name.length > 250 || category.length > 100) {
+      fail('Строка ' + number + ': проверьте название и категорию');
+    }
+
+    const validNumber = v =>
+      /^\d+$/.test(v) && Number(v) <= 2147483647;
+
+    if (!validNumber(rawPrice) || !validNumber(rawStock)) {
+      fail('Строка ' + number + ': цена и остаток должны быть целыми числами от 0');
+    }
+
+    rows.push([name, category, Number(rawPrice), Number(rawStock)]);
+  }
+
+  if (!rows.length) fail('В таблице нет товаров');
+
+  const client = await pool.connect();
+  let added = 0;
+  let skipped = 0;
+  try {
+    await client.query('BEGIN');
+    await client.query('LOCK TABLE products IN SHARE ROW EXCLUSIVE MODE');
+
+    for (const values of rows) {
+      const existing = await client.query(
+        'SELECT id FROM products WHERE LOWER(name)=LOWER($1) AND LOWER(category)=LOWER($2)',
+        values.slice(0, 2)
+      );
+
+      if (existing.rowCount) {
+        skipped++;
+        continue;
+      }
+
+      await client.query(
+        'INSERT INTO products (name,category,price,stock) VALUES ($1,$2,$3,$4)',
+        values
+      );
+      added++;
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  res.json({ ok: true, added, skipped });
+}));
 function productValues(p) {
   if (!text(p.name) || !text(p.category)) fail('Название и категория обязательны');
   return [text(p.name), text(p.category), text(p.description), cleanInt(p.price), cleanInt(p.old_price), cleanInt(p.stock), text(p.image), text(p.brand), text(p.unit) || 'шт.'];
