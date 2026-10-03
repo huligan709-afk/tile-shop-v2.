@@ -108,7 +108,9 @@ async function initializeDatabase() {
         product_id INTEGER NOT NULL, name TEXT NOT NULL, price INTEGER NOT NULL,
         qty INTEGER NOT NULL CHECK (qty > 0)
       );
-      CREATE INDEX IF NOT EXISTS order_items_order_id_idx ON order_items(order_id);
+     CREATE INDEX IF NOT EXISTS order_items_order_id_idx ON order_items(order_id);
+ALTER TABLE orders
+ADD COLUMN IF NOT EXISTS stock_released BOOLEAN NOT NULL DEFAULT FALSE;
     `);
     const { rows } = await client.query('SELECT COUNT(*)::int AS count FROM products');
     // Only seed a brand new database; never refill a deliberately emptied catalog.
@@ -326,12 +328,92 @@ app.get('/api/orders', admin, route(async (req, res) => {
   res.json(orders.map(o => ({ ...o, items: byOrder.get(o.id) || [] })));
 }));
 app.patch('/api/orders/:id/status', admin, route(async (req, res) => {
-  const statuses = ['Новый','Принят','В работе','Готов','Выполнен','Отменён'];
+  const statuses = [
+    'Новый', 'Принят', 'В работе',
+    'Готов', 'Выполнен', 'Отменён'
+  ];
   const status = (req.body || {}).status;
   if (!statuses.includes(status)) fail('Недопустимый статус');
-  const result = await pool.query('UPDATE orders SET status=$1 WHERE id=$2', [status, cleanInt(req.params.id)]);
-  if (!result.rowCount) return res.status(404).json({ error: 'Заказ не найден' });
-  res.json({ ok: true });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: orders } = await client.query(
+      'SELECT id,status,stock_released FROM orders WHERE id=$1 FOR UPDATE',
+      [cleanInt(req.params.id)]
+    );
+
+    if (!orders.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Заказ не найден' });
+    }
+
+    const order = orders[0];
+    const releaseStock = status === 'Отменён';
+
+    if (releaseStock !== order.stock_released) {
+      const { rows: items } = await client.query(
+        'SELECT product_id,SUM(qty)::bigint AS qty FROM order_items ' +
+        'WHERE order_id=$1 GROUP BY product_id ORDER BY product_id',
+        [order.id]
+      );
+
+      const ids = items.map(i => i.product_id);
+      const { rows: products } = await client.query(
+        'SELECT id,name,stock FROM products ' +
+        'WHERE id=ANY($1::int[]) ORDER BY id FOR UPDATE',
+        [ids]
+      );
+      const byId = new Map(products.map(p => [p.id, p]));
+
+      for (const item of items) {
+        const product = byId.get(item.product_id);
+        const qty = Number(item.qty);
+
+        if (!Number.isSafeInteger(qty) || qty <= 0) {
+          fail('Некорректное количество товара в заказе');
+        }
+
+        if (!product) {
+          if (!releaseStock) {
+            fail('Нельзя вернуть заказ в работу: один из товаров удалён');
+          }
+          continue;
+        }
+
+        if (releaseStock) {
+          if (product.stock + qty > 2147483647) {
+            fail('Слишком большой остаток: ' + product.name);
+          }
+        } else if (product.stock < qty) {
+          fail('Недостаточно товара: ' + product.name);
+        }
+      }
+
+      for (const item of items) {
+        if (!byId.has(item.product_id)) continue;
+        const qty = Number(item.qty);
+        await client.query(
+          'UPDATE products SET stock=stock+$1 WHERE id=$2',
+          [releaseStock ? qty : -qty, item.product_id]
+        );
+      }
+    }
+
+    await client.query(
+      'UPDATE orders SET status=$1,stock_released=$2 WHERE id=$3',
+      [status, releaseStock, order.id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }));
 function productValues(p) {
   if (!text(p.name) || !text(p.category)) fail('Название и категория обязательны');
