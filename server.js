@@ -438,7 +438,7 @@ function telegramApi(method, body) {
 const botKeyboard = {
   resize_keyboard: true,
   keyboard: [
-    [{ text: '🛍 Магазин', web_app: { url: SHOP_URL } }],
+    [{ text: '🛍 Магазин' }],
     [{ text: '📦 Мои заказы' }, { text: '🛒 Корзина' }],
     [{ text: '🔥 Акции' }, { text: '☎️ Связаться с менеджером' }]
   ]
