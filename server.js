@@ -111,6 +111,8 @@ async function initializeDatabase() {
      CREATE INDEX IF NOT EXISTS order_items_order_id_idx ON order_items(order_id);
 ALTER TABLE orders
 ADD COLUMN IF NOT EXISTS stock_released BOOLEAN NOT NULL DEFAULT FALSE;
+   ALTER TABLE products
+ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
     `);
     const { rows } = await client.query('SELECT COUNT(*)::int AS count FROM products');
     // Only seed a brand new database; never refill a deliberately emptied catalog.
@@ -141,7 +143,11 @@ function fail(message) { const err = new Error(message); err.status = 400; throw
 
 app.get('/api/products', route(async (req, res) => {
   const args = [];
-  let sql = 'SELECT * FROM products WHERE 1=1';
+  const isAdmin =
+  (req.headers['x-admin-key'] || req.query.key) === ADMIN_KEY;
+
+let sql = 'SELECT * FROM products WHERE ' +
+  (isAdmin ? '1=1' : 'is_active=TRUE');
   const q = text(req.query.q), category = text(req.query.category);
   if (q) {
     args.push('%' + q + '%');
@@ -152,12 +158,20 @@ app.get('/api/products', route(async (req, res) => {
   res.json(rows);
 }));
 app.get('/api/products/:id', route(async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM products WHERE id=$1', [cleanInt(req.params.id)]);
+  const isAdmin =
+  (req.headers['x-admin-key'] || req.query.key) === ADMIN_KEY;
+
+const { rows } = await pool.query(
+  'SELECT * FROM products WHERE id=$1 AND (is_active=TRUE OR $2::boolean)',
+  [cleanInt(req.params.id), isAdmin]
+);
   if (!rows.length) return res.status(404).json({ error: 'Товар не найден' });
   res.json(rows[0]);
 }));
 app.get('/api/categories', route(async (req, res) => {
-  const { rows } = await pool.query('SELECT category, COUNT(*)::int AS count FROM products GROUP BY category ORDER BY category');
+  const { rows } = await pool.query(
+  'SELECT category, COUNT(*)::int AS count FROM products WHERE is_active=TRUE GROUP BY category ORDER BY category'
+);
   res.json(rows);
 }));
 // История заказов покупателя и проверка Telegram.
@@ -289,10 +303,14 @@ app.post('/api/orders', route(async (req, res) => {
     await client.query('BEGIN');
     // Lock products in the same order so simultaneous orders cannot oversell stock.
     const ids = [...quantities.keys()].sort((a, b) => a - b);
-    const { rows: products } = await client.query('SELECT id,name,price,stock FROM products WHERE id=ANY($1::int[]) ORDER BY id FOR UPDATE', [ids]);
+    const { rows: products } = await client.query(
+  'SELECT id,name,price,stock,is_active FROM products WHERE id=ANY($1::int[]) ORDER BY id FOR UPDATE',
+  [ids]
+);
     if (products.length !== ids.length) fail('Один из товаров не найден');
     let total = 0;
     for (const p of products) {
+      if (!p.is_active) fail('Товар снят с продажи: ' + p.name);
       const qty = quantities.get(p.id);
       if (p.stock < qty) fail(`Недостаточно товара: ${p.name}`);
       total += p.price * qty;
@@ -431,6 +449,23 @@ res.json({ ok: true });
     client.release();
   }
 }));
+app.patch('/api/products/:id/visibility', admin, route(async (req, res) => {
+  const isActive = (req.body || {}).isActive;
+  if (typeof isActive !== 'boolean') {
+    return res.status(400).json({ error: 'Некорректное значение' });
+  }
+
+  const result = await pool.query(
+    'UPDATE products SET is_active=$1 WHERE id=$2',
+    [isActive, cleanInt(req.params.id)]
+  );
+
+  if (!result.rowCount) {
+    return res.status(404).json({ error: 'Товар не найден' });
+  }
+  res.json({ ok: true });
+}));
+
 function productValues(p) {
   if (!text(p.name) || !text(p.category)) fail('Название и категория обязательны');
   return [text(p.name), text(p.category), text(p.description), cleanInt(p.price), cleanInt(p.old_price), cleanInt(p.stock), text(p.image), text(p.brand), text(p.unit) || 'шт.'];
@@ -614,7 +649,7 @@ async function handleBotMessage(message) {
   if (command === '/sales' || /акции/i.test(value)) {
     const { rows } = await pool.query(
       'SELECT name,price,old_price FROM products ' +
-      'WHERE old_price>price AND stock>0 ' +
+     'WHERE old_price>price AND stock>0 AND is_active=TRUE ' +
       'ORDER BY id DESC LIMIT 8'
     );
 
