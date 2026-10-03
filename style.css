@@ -23,3 +23,79 @@
   object-fit: contain;
   background: #fff;
 }
+/* Нижнее меню */
+.nav {
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.97);
+  border-top: 1px solid #e8edf3;
+  box-shadow: 0 -4px 20px rgba(23, 38, 56, 0.06);
+}
+
+.nav button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 7px 2px;
+  border-radius: 16px;
+  color: #8190a2;
+  font-size: 11px;
+  font-weight: 700;
+  transition: background 0.2s, color 0.2s;
+}
+
+.nav button.active {
+  color: #1683f5;
+  background: #eaf4ff;
+}
+
+.nav button:active {
+  background: #eef4fa;
+}
+
+.nav button:focus-visible {
+  outline: 2px solid #1683f5;
+  outline-offset: -2px;
+}
+
+/* Вместо эмодзи — одинаковые по размеру иконки */
+.nav b {
+  display: block;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  font-size: 0;
+  line-height: 0;
+  background: currentColor;
+  -webkit-mask: var(--nav-icon) center / contain no-repeat;
+  mask: var(--nav-icon) center / contain no-repeat;
+}
+
+/* Главная */
+.nav button:nth-child(1) {
+  --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 10.5 12 3l9 7.5M5 9v11h5v-6h4v6h5V9'/%3E%3C/svg%3E");
+}
+
+/* Каталог */
+.nav button:nth-child(2) {
+  --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='m16 16 5 5'/%3E%3C/svg%3E");
+}
+
+/* Корзина */
+.nav button:nth-child(3) {
+  --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 3h3l2.5 12h11L21 6H6M8 18h10'/%3E%3Ccircle cx='9' cy='21' r='1'/%3E%3Ccircle cx='18' cy='21' r='1'/%3E%3C/svg%3E");
+}
+
+/* Заказы */
+.nav button:nth-child(4) {
+  --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 3h14v18l-3-2-4 2-4-2-3 2V3ZM9 7h6M9 11h6M9 15h4'/%3E%3C/svg%3E");
+}
+
+/* Профиль */
+.nav button:nth-child(5) {
+  --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3Cpath d='M4 21v-2a8 8 0 0 1 16 0v2H4Z'/%3E%3C/svg%3E");
+}
