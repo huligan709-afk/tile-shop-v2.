@@ -220,10 +220,33 @@ function renderProducts(){
       <p>${esc(p.category)}</p>
       <p><b>${money(p.price)}</b> · Остаток: ${esc(p.stock)} ${esc(p.unit)}</p>
       <button data-edit="${p.id}">Редактировать</button>
-    </article>
+   <p>${p.is_active === false ? 'Скрыт с продажи' : 'В продаже'}</p>
+<button data-visibility="${p.id}" data-active="${p.is_active !== false}">
+  ${p.is_active === false ? 'Вернуть в продажу' : 'Скрыть с продажи'}
+</button> </article>
   `).join('')||'<p>Товары не найдены</p>';
 }
-function orderContactButtons(o) {
+$('products').addEventListener('click', async e => {
+  const button = e.target.closest('[data-visibility]');
+  if (!button) return;
+  e.stopImmediatePropagation();
+  if (button.disabled) return;
+
+  button.disabled = true;
+  try {
+    await api('/api/products/' + button.dataset.visibility + '/visibility', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        isActive: button.dataset.active !== 'true'
+      })
+    });
+    await load();
+  } catch (err) {
+    $('msg').textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+}, true);function orderContactButtons(o) {
   const rawPhone = String(o.phone || '').trim();
   let digits = rawPhone.replace(/\D/g, '');
 
