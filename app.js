@@ -23,3 +23,202 @@ function render(){app.innerHTML=header()+(state.page==='home'?home():state.page=
 window.go=(p,cat)=>{state.page=p;if(cat){state.search=cat}if(p!=='detail')detailQty=1;render()};window.search=v=>{state.search=v;state.page='catalog';render()};window.openProduct=id=>{state.selected=state.products.find(p=>p.id===id);state.page='detail';detailQty=1;render()};window.addToCart=id=>{state.cart[id]=(state.cart[id]||0)+detailQty;save();toast('Товар добавлен в корзину');render()};window.cartPlus=id=>{state.cart[id]=(state.cart[id]||0)+1;save();render()};window.cartMinus=id=>{state.cart[id]=Math.max(0,(state.cart[id]||0)-1);if(!state.cart[id])delete state.cart[id];save();render()};window.submitOrder=async e=>{e.preventDefault();const items=cartItems().map(x=>({id:x.p.id,qty:x.qty}));try{const u=tg?.initDataUnsafe?.user;const d=await api('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({customerName:document.getElementById('name').value,phone:document.getElementById('phone').value,address:document.getElementById('address').value,comment:document.getElementById('comment').value,items,telegramId:u?.id||'',telegramUsername:u?.username||''})});state.cart={};save();state.page='orders';render();toast(`Заказ №${d.orderId} принят. Менеджер свяжется с вами.`)}catch(err){toast(err.message)}};
 function toast(t){const x=document.createElement('div');x.className='toast';x.textContent=t;document.body.appendChild(x);setTimeout(()=>x.remove(),2800)}
 load();
+// История заказов в магазине.
+const orderEsc = v => String(v ?? '').replace(/[&<>"']/g, c => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[c]));
+
+state.myOrders = [];
+state.ordersLoading = false;
+state.ordersError = '';
+
+let orderRequest = 0;
+let orderSubmitting = false;
+
+orders = function () {
+  return `<main class="wrap orders">
+    <h1 class="page-title">Заказы</h1>
+
+    <button class="back" onclick="loadMyOrders()"
+      ${state.ordersLoading ? 'disabled' : ''}>
+      Обновить историю
+    </button>
+
+    ${state.ordersLoading
+      ? '<p class="notice">Загрузка заказов…</p>'
+      : ''}
+
+    ${state.ordersError
+      ? `<p class="notice">${orderEsc(state.ordersError)}</p>`
+      : ''}
+
+    ${state.myOrders.map(o => `
+      <article class="order">
+        <h2>Заказ №${orderEsc(o.id)} · ${money(o.total)}</h2>
+        <span class="status">${orderEsc(o.status)}</span>
+
+        <p class="desc">${
+          orderEsc(new Date(o.created_at).toLocaleString('ru-RU'))
+        }</p>
+
+        ${(o.items || []).map(i => `
+          <p>${orderEsc(i.name)} —
+            ${orderEsc(i.qty)} × ${money(i.price)}</p>
+        `).join('')}
+
+        ${o.address
+          ? `<p>Доставка: ${orderEsc(o.address)}</p>`
+          : ''}
+
+        ${o.comment
+          ? `<p>Комментарий: ${orderEsc(o.comment)}</p>`
+          : ''}
+      </article>
+    `).join('')}
+
+    ${!state.myOrders.length &&
+      !state.ordersLoading &&
+      !state.ordersError
+      ? '<div class="empty">У вас пока нет заказов.</div>'
+      : ''}
+  </main>`;
+};
+
+window.loadMyOrders = async () => {
+  const request = ++orderRequest;
+  state.ordersError = '';
+
+  if (!tg?.initData) {
+    state.myOrders = [];
+    state.ordersLoading = false;
+    state.ordersError =
+      'Чтобы увидеть историю, откройте магазин через кнопку «Магазин» в Telegram-боте.';
+
+    if (state.page === 'orders') render();
+    return;
+  }
+
+  state.ordersLoading = true;
+  if (state.page === 'orders') render();
+
+  try {
+    const rows = await api('/api/my-orders', {
+      headers: {
+        'X-Telegram-Init-Data': tg.initData
+      },
+      cache: 'no-store'
+    });
+
+    if (!Array.isArray(rows)) {
+      throw Error('Не удалось загрузить историю заказов.');
+    }
+
+    if (request === orderRequest) {
+      state.myOrders = rows;
+    }
+  } catch (e) {
+    if (request === orderRequest) {
+      state.ordersError = e.message;
+    }
+  } finally {
+    if (request === orderRequest) {
+      state.ordersLoading = false;
+      if (state.page === 'orders') render();
+    }
+  }
+};
+
+const goBeforeOrders = window.go;
+
+window.go = (page, category) => {
+  goBeforeOrders(page, category);
+  if (page === 'orders') window.loadMyOrders();
+};
+
+window.submitOrder = async e => {
+  e.preventDefault();
+  if (orderSubmitting) return;
+
+  const form = e.target;
+  const button = form.querySelector('button.submit');
+  const items = cartItems().map(x => ({
+    id: x.p.id,
+    qty: x.qty
+  }));
+
+  if (!items.length) {
+    toast('Корзина пуста');
+    return;
+  }
+
+  const body = {
+    customerName: document.getElementById('name').value,
+    phone: document.getElementById('phone').value,
+    address: document.getElementById('address').value,
+    comment: document.getElementById('comment').value,
+    items
+  };
+
+  orderSubmitting = true;
+  if (button) button.disabled = true;
+
+  let result;
+
+  try {
+    result = await api('/api/orders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(tg?.initData
+          ? { 'X-Telegram-Init-Data': tg.initData }
+          : {})
+      },
+      body: JSON.stringify(body)
+    });
+  } catch (err) {
+    toast(err.message);
+    return;
+  } finally {
+    orderSubmitting = false;
+    if (button) button.disabled = false;
+  }
+
+  state.cart = {};
+  try { save(); } catch (_) {}
+
+  for (const item of items) {
+    const p = state.products.find(p => p.id === item.id);
+    if (p) p.stock = Math.max(0, p.stock - item.qty);
+  }
+
+  state.myOrders = [{
+    id: result.orderId,
+    total: result.total,
+    status: 'Новый',
+    created_at: new Date().toISOString(),
+    address: body.address,
+    comment: body.comment,
+    items: items.map(i => {
+      const p = state.products.find(p => p.id === i.id);
+      return {
+        name: p?.name || '',
+        price: p?.price || 0,
+        qty: i.qty
+      };
+    })
+  }, ...state.myOrders];
+
+  state.page = 'orders';
+  state.ordersError = '';
+  render();
+
+  toast(
+    `Заказ №${result.orderId} принят. Менеджер свяжется с вами.`
+  );
+
+  if (tg?.initData) window.loadMyOrders();
+};
