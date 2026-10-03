@@ -20,7 +20,7 @@ button:disabled{opacity:.5}
 .notice{white-space:pre-wrap;margin:12px 0}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .photo{width:80px;height:80px;object-fit:cover;border-radius:10px;margin-bottom:10px}
-#preview{max-width:100%;max-height:180px}
+#preview{max-width:100%;max-height:180px;margin:12px 0}
 p{overflow-wrap:anywhere}
 label{display:block}
 details{margin:10px 0}
@@ -88,10 +88,18 @@ summary{cursor:pointer}
 <input name="brand" maxlength="100">
 </label>
 
-<label>Ссылка на фото
+<label>Фото из галереи
+<input id="gallery" type="file" accept="image/*">
+</label>
+
+<p id="photoMsg" class="notice" role="status"></p>
+
+<label>Или ссылка на фото
 <input name="image" type="url" placeholder="https://…">
 </label>
-<p class="muted">Нужна прямая ссылка на изображение. Загрузка фото с телефона пока не поддерживается.</p>
+
+<button id="removePhoto" type="button" class="secondary">Убрать фото</button>
+<br>
 <img id="preview" alt="Предпросмотр фото" hidden referrerpolicy="no-referrer">
 
 <p id="saveMsg" class="notice" role="status"></p>
@@ -129,9 +137,25 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({
 const money=v=>Number(v).toLocaleString('ru-RU')+' ₽';
 const statuses=['Новый','Принят','В работе','Готов','Выполнен','Отменён'];
 
-let key='',products=[],editId=null,saving=false;
+let key='';
+let products=[];
+let editId=null;
+let galleryPhoto='';
+let photoBusy=false;
+let photoVersion=0;
+let saving=false;
+
+function imageField(){
+  return $('editor').elements.namedItem('image');
+}
 
 function photoUrl(value){
+  if(
+    /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value)
+    && value.length<700000
+  ){
+    return value;
+  }
   try{
     const u=new URL(value);
     return ['https:','http:'].includes(u.protocol)?u.href:'';
@@ -182,6 +206,7 @@ function renderProducts(){
     (p.name+' '+p.category).toLowerCase().includes(q)
   );
   $('count').textContent='Товаров: '+products.length;
+
   $('products').innerHTML=rows.map(p=>`
     <article class="card">
       ${photoUrl(p.image)?`
@@ -244,6 +269,12 @@ function openEditor(id=null){
   }:products.find(p=>p.id===id);
 
   if(!p)return;
+
+  photoVersion++;
+  photoBusy=false;
+  galleryPhoto='';
+  imageField().disabled=false;
+  $('save').disabled=false;
   editId=id;
   $('editor').reset();
 
@@ -253,6 +284,15 @@ function openEditor(id=null){
   ]){
     $('editor').elements.namedItem(field).value=p[field]??'';
   }
+
+  if(String(p.image||'').startsWith('data:image/')){
+    galleryPhoto=photoUrl(p.image);
+    imageField().value='';
+  }
+
+  $('photoMsg').textContent=galleryPhoto
+    ?'Фото сохранено в карточке'
+    :'';
 
   $('editTitle').textContent=id===null
     ?'Новый товар'
@@ -265,15 +305,21 @@ function openEditor(id=null){
 }
 
 function preview(){
-  const url=photoUrl(
-    $('editor').elements.namedItem('image').value
-  );
+  const url=galleryPhoto||photoUrl(imageField().value);
   $('preview').hidden=!url;
   if(url)$('preview').src=url;
   else $('preview').removeAttribute('src');
 }
 
 function closeEditor(){
+  photoVersion++;
+  photoBusy=false;
+  galleryPhoto='';
+  imageField().disabled=false;
+  $('save').disabled=false;
+  $('gallery').value='';
+  $('preview').removeAttribute('src');
+  $('preview').hidden=true;
   $('editor').hidden=true;
   editId=null;
 }
@@ -289,6 +335,60 @@ function logout(){
   $('editor').reset();
   closeEditor();
   $('msg').textContent='Вы вышли';
+}
+
+async function compressPhoto(file){
+  if(file.size>20*1024*1024){
+    throw Error('Фото слишком большое. Выберите файл до 20 МБ.');
+  }
+
+  const url=URL.createObjectURL(file);
+  const img=new Image();
+
+  try{
+    await new Promise((resolve,reject)=>{
+      img.onload=resolve;
+      img.onerror=()=>reject(Error(
+        'Не удалось открыть фото. Выберите JPEG, PNG или WebP. Для HEIC можно выбрать снимок экрана фотографии.'
+      ));
+      img.src=url;
+    });
+
+    let scale=Math.min(
+      1,
+      1200/Math.max(img.naturalWidth,img.naturalHeight)
+    );
+
+    const canvas=document.createElement('canvas');
+
+    for(let attempt=0;attempt<8;attempt++){
+      canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));
+      canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+
+      const ctx=canvas.getContext('2d');
+      if(!ctx)throw Error('Браузер не смог обработать фото.');
+
+      ctx.fillStyle='#ffffff';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(img,0,0,canvas.width,canvas.height);
+
+      for(const quality of [.85,.7,.55]){
+        const data=canvas.toDataURL('image/jpeg',quality);
+        if(
+          data.startsWith('data:image/jpeg;base64,')
+          && data.length<=450000
+        ){
+          return data;
+        }
+      }
+
+      scale*=.75;
+    }
+
+    throw Error('Не удалось уменьшить фото. Выберите другое изображение.');
+  }finally{
+    URL.revokeObjectURL(url);
+  }
 }
 
 $('login').onsubmit=e=>{
@@ -315,7 +415,65 @@ $('cancel').onclick=()=>{
 
 $('search').oninput=renderProducts;
 
-$('editor').elements.namedItem('image').oninput=preview;
+imageField().oninput=()=>{
+  if(photoBusy)return;
+  galleryPhoto='';
+  $('gallery').value='';
+  $('photoMsg').textContent='';
+  preview();
+};
+
+$('gallery').onchange=async()=>{
+  if(saving)return;
+  const file=$('gallery').files[0];
+  if(!file)return;
+
+  const version=++photoVersion;
+  photoBusy=true;
+  $('save').disabled=true;
+  imageField().disabled=true;
+  $('photoMsg').textContent='Подготавливаем фото…';
+
+  try{
+    const data=await compressPhoto(file);
+    if(version!==photoVersion)return;
+
+    galleryPhoto=data;
+    imageField().value='';
+    preview();
+
+    $('photoMsg').textContent=
+      'Фото готово. Нажмите «Сохранить товар». Примерный размер: '
+      +Math.round(data.length*.75/1024)+' КБ.';
+  }catch(e){
+    if(version===photoVersion){
+      $('photoMsg').textContent=e.message;
+      $('gallery').value='';
+    }
+  }finally{
+    if(version===photoVersion){
+      photoBusy=false;
+      $('save').disabled=false;
+      imageField().disabled=false;
+    }
+  }
+};
+
+$('removePhoto').onclick=()=>{
+  if(saving)return;
+
+  photoVersion++;
+  photoBusy=false;
+  galleryPhoto='';
+  $('gallery').value='';
+  imageField().value='';
+  imageField().disabled=false;
+  $('save').disabled=false;
+  preview();
+
+  $('photoMsg').textContent=
+    'Фото убрано. Нажмите «Сохранить товар».';
+};
 
 $('products').onclick=e=>{
   const button=e.target.closest('[data-edit]');
@@ -349,12 +507,14 @@ $('orders').onchange=async e=>{
 
 $('editor').onsubmit=async e=>{
   e.preventDefault();
-  if(saving)return;
+  if(saving||photoBusy)return;
 
   const body=Object.fromEntries(new FormData($('editor')));
+  body.image=galleryPhoto||body.image;
 
   for(const field of ['price','stock','old_price']){
     body[field]=Number(body[field]);
+
     if(
       !Number.isInteger(body[field])||
       body[field]<0||
@@ -376,7 +536,7 @@ $('editor').onsubmit=async e=>{
 
   if(body.image&&!photoUrl(body.image)){
     $('saveMsg').textContent=
-      'Укажите ссылку на фото, начинающуюся с https:// или http://';
+      'Выберите фото из галереи или укажите ссылку https://';
     return;
   }
 
