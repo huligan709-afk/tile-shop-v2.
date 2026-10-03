@@ -60,7 +60,7 @@ if (!count) {
 }
 
 app.use(express.json({limit:'1mb'}));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 
 function cleanInt(v){ const n=Number(v); return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0; }
 function admin(req,res,next){
@@ -134,7 +134,7 @@ app.patch('/api/products/:id',admin,(req,res)=>{
 });
 app.delete('/api/products/:id',admin,(req,res)=>{db.prepare('DELETE FROM products WHERE id=?').run(req.params.id);res.json({ok:true});});
 
-app.get('/admin',(req,res)=>res.sendFile(path.join(__dirname,'public','admin.html')));
-app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
+app.get('/admin',(req,res)=>res.sendFile(path.join(__dirname,'admin.html')));
+app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'index.html')));
 
 app.listen(PORT,()=>console.log(`Tile shop running on ${PORT}`));
