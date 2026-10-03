@@ -340,7 +340,7 @@ app.patch('/api/orders/:id/status', admin, route(async (req, res) => {
     await client.query('BEGIN');
 
     const { rows: orders } = await client.query(
-      'SELECT id,status,stock_released FROM orders WHERE id=$1 FOR UPDATE',
+      'SELECT id,status,stock_released,telegram_id FROM orders WHERE id=$1 FOR UPDATE',
       [cleanInt(req.params.id)]
     );
 
@@ -405,9 +405,25 @@ app.patch('/api/orders/:id/status', admin, route(async (req, res) => {
       'UPDATE orders SET status=$1,stock_released=$2 WHERE id=$3',
       [status, releaseStock, order.id]
     );
+await client.query('COMMIT');
 
-    await client.query('COMMIT');
-    res.json({ ok: true });
+if (
+  order.status !== status &&
+  /^[1-9]\d*$/.test(String(order.telegram_id || ''))
+) {
+  telegramApi('sendMessage', {
+    chat_id: order.telegram_id,
+    text: '📦 Заказ №' + order.id +
+      '\nНовый статус: ' + status
+  }).catch(() => {
+    console.error(
+      'Telegram: уведомление о статусе не отправлено; статус сохранён.'
+    );
+  });
+}
+
+res.json({ ok: true });
+    
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
