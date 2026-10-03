@@ -266,9 +266,266 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Не удалось выполнить запрос' });
 });
 
+// Telegram: команды, кнопки и подключение webhook.
+const crypto = require('crypto');
+const SHOP_URL = 'https://tile-shop-z99g.onrender.com';
+const WEBHOOK_SECRET = crypto.createHash('sha256')
+  .update('tile-shop-webhook:' + BOT_TOKEN).digest('hex');
+
+function telegramApi(method, body) {
+  if (!BOT_TOKEN) return Promise.reject(new Error('BOT_TOKEN не задан'));
+  const payload = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    let request;
+    const timer = setTimeout(() => {
+      if (request) request.destroy();
+      reject(new Error('Telegram: время ожидания истекло'));
+    }, 12000);
+
+    const finish = (err, result) => {
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve(result);
+    };
+
+    request = https.request({
+      hostname: 'api.telegram.org',
+      path: '/bot' + BOT_TOKEN + '/' + method,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    }, response => {
+      let data = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => {
+        if (data.length < 100000) data += chunk;
+      });
+      response.on('error', () =>
+        finish(new Error('Telegram: ошибка ответа'))
+      );
+      response.on('end', () => {
+        try {
+          const result = JSON.parse(data);
+          if (!result.ok) {
+            return finish(new Error(
+              'Telegram: код ' + result.error_code
+            ));
+          }
+          finish(null, result.result);
+        } catch (_) {
+          finish(new Error('Telegram: некорректный ответ'));
+        }
+      });
+    });
+
+    request.on('error', () =>
+      finish(new Error('Telegram: ошибка соединения'))
+    );
+    request.end(payload);
+  });
+}
+
+const botKeyboard = {
+  resize_keyboard: true,
+  keyboard: [
+    [{ text: '🛍 Магазин', web_app: { url: SHOP_URL } }],
+    [{ text: '📦 Мои заказы' }, { text: '🛒 Корзина' }],
+    [{ text: '🔥 Акции' }, { text: '☎️ Связаться с менеджером' }]
+  ]
+};
+
+const openShopButton = {
+  inline_keyboard: [[{
+    text: '🛍 Открыть магазин',
+    web_app: { url: SHOP_URL }
+  }]]
+};
+
+function botReply(chatId, message, markup = botKeyboard) {
+  return telegramApi('sendMessage', {
+    chat_id: chatId,
+    text: message.slice(0, 3900),
+    reply_markup: markup
+  });
+}
+
+async function handleBotMessage(message) {
+  if (
+    !message ||
+    message.chat?.type !== 'private' ||
+    !message.from?.id
+  ) return;
+
+  const chatId = message.chat.id;
+  const value = String(message.text || '').trim();
+  const command = value.split(/\s/)[0]
+    .split('@')[0].toLowerCase();
+
+  if (command === '/start' || command === '/help') {
+    return botReply(chatId,
+      'Добро пожаловать в «Всё для плиточника»! 🧱\n\n' +
+      'Материалы, расходники и инструмент в одном месте.\n' +
+      'Нажмите «🛍 Магазин», чтобы открыть каталог.'
+    );
+  }
+
+  if (command === '/shop' || /магазин/i.test(value)) {
+    return botReply(
+      chatId,
+      'Откройте магазин по кнопке ниже.',
+      openShopButton
+    );
+  }
+
+  if (command === '/cart' || /корзина/i.test(value)) {
+    return botReply(
+      chatId,
+      'Откройте магазин и нажмите «Корзина» в нижнем меню.',
+      openShopButton
+    );
+  }
+
+  if (command === '/orders' || /мои заказы/i.test(value)) {
+    const { rows } = await pool.query(
+      'SELECT id,total,status FROM orders ' +
+      'WHERE telegram_id=$1 ORDER BY id DESC LIMIT 10',
+      [String(message.from.id)]
+    );
+
+    const answer = rows.length
+      ? 'Ваши последние заказы:\n\n' + rows.map(o =>
+          '№' + o.id + ' · ' + o.total + ' ₽ · ' + o.status
+        ).join('\n')
+      : 'Заказов, привязанных к вашему Telegram, пока нет.\n' +
+        'Заказы, оформленные в обычном браузере, ' +
+        'могут отображаться только в магазине.';
+
+    return botReply(chatId, answer);
+  }
+
+  if (command === '/sales' || /акции/i.test(value)) {
+    const { rows } = await pool.query(
+      'SELECT name,price,old_price FROM products ' +
+      'WHERE old_price>price AND stock>0 ' +
+      'ORDER BY id DESC LIMIT 8'
+    );
+
+    return botReply(chatId, rows.length
+      ? '🔥 Товары со скидкой:\n\n' + rows.map(p =>
+          String(p.name).slice(0, 250) + '\n' +
+          p.price + ' ₽ вместо ' + p.old_price + ' ₽'
+        ).join('\n\n') +
+        '\n\nОткройте магазин для оформления заказа.'
+      : 'Сейчас товаров со скидкой в наличии нет.',
+      openShopButton
+    );
+  }
+
+  if (command === '/contact' || /менеджер/i.test(value)) {
+    if (!/^\d+$/.test(ADMIN_CHAT_ID)) {
+      return botReply(
+        chatId,
+        'Контакт менеджера пока не настроен.'
+      );
+    }
+
+    return botReply(
+      chatId,
+      'Нажмите кнопку, чтобы открыть профиль менеджера.',
+      {
+        inline_keyboard: [[{
+          text: '☎️ Менеджер',
+          url: 'tg://user?id=' + ADMIN_CHAT_ID
+        }]]
+      }
+    );
+  }
+
+  return botReply(chatId, 'Выберите действие в меню ниже.');
+}
+
+const handledUpdates = new Map();
+
+app.post('/telegram/webhook', async (req, res) => {
+  if (
+    !BOT_TOKEN ||
+    req.get('X-Telegram-Bot-Api-Secret-Token') !== WEBHOOK_SECRET
+  ) {
+    return res.sendStatus(403);
+  }
+
+  const update = req.body || {};
+  if (!Number.isSafeInteger(update.update_id)) {
+    return res.sendStatus(400);
+  }
+
+  try {
+    let work = handledUpdates.get(update.update_id);
+    if (!work) {
+      work = handleBotMessage(update.message);
+      handledUpdates.set(update.update_id, work);
+    }
+    await work;
+
+    while (handledUpdates.size > 1000) {
+      handledUpdates.delete(
+        handledUpdates.keys().next().value
+      );
+    }
+
+    res.sendStatus(200);
+  } catch (_) {
+    handledUpdates.delete(update.update_id);
+    console.error('Telegram: не удалось обработать команду');
+    res.sendStatus(503);
+  }
+});
+
+async function connectBot(attempt = 0) {
+  if (!BOT_TOKEN) {
+    return console.error('Telegram: задайте BOT_TOKEN');
+  }
+
+  try {
+    await telegramApi('setWebhook', {
+      url: SHOP_URL + '/telegram/webhook',
+      secret_token: WEBHOOK_SECRET,
+      allowed_updates: ['message'],
+      max_connections: 2
+    });
+
+    console.log('Telegram: webhook подключён');
+
+    await telegramApi('setChatMenuButton', {
+      menu_button: {
+        type: 'web_app',
+        text: 'Магазин',
+        web_app: { url: SHOP_URL }
+      }
+    });
+  } catch (_) {
+    console.error(
+      'Telegram: ошибка настройки, попытка ' + (attempt + 1)
+    );
+    if (attempt < 4) {
+      setTimeout(() => connectBot(attempt + 1), 15000);
+    }
+  }
+}
+
 initializeDatabase().then(() => {
-  app.listen(PORT, () => console.log(`Tile shop running on ${PORT}; database: PostgreSQL`));
+  app.listen(PORT, () => {
+    console.log(
+      `Tile shop running on ${PORT}; database: PostgreSQL`
+    );
+    connectBot();
+  });
 }).catch(err => {
-  console.error('Не удалось запустить базу. Проверьте DATABASE_URL:', err.code || 'unknown');
+  console.error(
+    'Не удалось запустить базу. Проверьте DATABASE_URL:',
+    err.code || 'unknown'
+  );
   pool.end().finally(() => process.exit(1));
 });
