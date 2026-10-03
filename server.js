@@ -158,7 +158,115 @@ app.get('/api/categories', route(async (req, res) => {
   const { rows } = await pool.query('SELECT category, COUNT(*)::int AS count FROM products GROUP BY category ORDER BY category');
   res.json(rows);
 }));
+// История заказов покупателя и проверка Telegram.
+function telegramCustomer(req) {
+  const raw = req.get('X-Telegram-Init-Data');
 
+  if (
+    !BOT_TOKEN ||
+    typeof raw !== 'string' ||
+    raw.length > 16000
+  ) return null;
+
+  try {
+    const params = new URLSearchParams(raw);
+    const hash = params.get('hash') || '';
+
+    if (!/^[a-f0-9]{64}$/i.test(hash)) return null;
+
+    const seen = new Set();
+    for (const [name] of params) {
+      if (seen.has(name)) return null;
+      seen.add(name);
+    }
+
+    params.delete('hash');
+    params.sort();
+
+    const check = [...params]
+      .map(([name, value]) => name + '=' + value)
+      .join('\n');
+
+    const c = require('crypto');
+    const secret = c.createHmac('sha256', 'WebAppData')
+      .update(BOT_TOKEN)
+      .digest();
+
+    const expected = c.createHmac('sha256', secret)
+      .update(check)
+      .digest();
+
+    if (!c.timingSafeEqual(
+      expected,
+      Buffer.from(hash, 'hex')
+    )) return null;
+
+    const age = Date.now() / 1000 -
+      Number(params.get('auth_date'));
+
+    if (
+      !Number.isFinite(age) ||
+      age < -60 ||
+      age > 86400
+    ) return null;
+
+    const user = JSON.parse(params.get('user') || 'null');
+
+    return Number.isSafeInteger(user?.id) && user.id > 0
+      ? user
+      : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+app.get('/api/my-orders', route(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+
+  const user = telegramCustomer(req);
+
+  if (!user) {
+    return res.status(401).json({
+      error: 'Закройте магазин и откройте его снова через кнопку в боте.'
+    });
+  }
+
+  const { rows: orders } = await pool.query(
+    'SELECT id,total,status,address,comment,created_at ' +
+    'FROM orders WHERE telegram_id=$1 ' +
+    'ORDER BY id DESC LIMIT 100',
+    [String(user.id)]
+  );
+
+  if (!orders.length) return res.json([]);
+
+  const { rows: items } = await pool.query(
+    'SELECT order_id,name,price,qty FROM order_items ' +
+    'WHERE order_id=ANY($1::int[]) ORDER BY id',
+    [orders.map(o => o.id)]
+  );
+
+  res.json(orders.map(o => ({
+    ...o,
+    items: items.filter(i => i.order_id === o.id)
+  })));
+}));
+
+app.post('/api/orders', (req, res, next) => {
+  const user = telegramCustomer(req);
+
+  if (req.get('X-Telegram-Init-Data') && !user) {
+    return res.status(401).json({
+      error: 'Закройте магазин и откройте его снова через кнопку в боте.'
+    });
+  }
+
+  req.body = req.body || {};
+  req.body.telegramId = user ? user.id : '';
+  req.body.telegramUsername = user ? user.username || '' : '';
+
+  next();
+});
 app.post('/api/orders', route(async (req, res) => {
   const body = req.body || {};
   const customerName = text(body.customerName), phone = text(body.phone);
