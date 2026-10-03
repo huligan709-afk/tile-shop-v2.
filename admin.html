@@ -600,11 +600,40 @@ renderOrders = function(rows) {
   const isArchived = o =>
     ['Выполнен', 'Отменён'].includes(o.status);
 
-  const mode = $('orderView').value;
-  const visible = rows.filter(o =>
-    mode === 'all' ||
-    (mode === 'archive' ? isArchived(o) : !isArchived(o))
-  );
+  if (!$('orderSearch')) {
+  const label = document.createElement('label');
+  label.textContent = 'Поиск заказов';
+
+  const input = document.createElement('input');
+  input.id = 'orderSearch';
+  input.type = 'search';
+  input.placeholder = 'Номер заказа, имя или телефон';
+  input.oninput = () => renderOrders(archiveOrders);
+
+  $('orderView').after(label, input);
+}
+
+const mode = $('orderView').value;
+const query = $('orderSearch').value.trim().toLowerCase();
+const digits = query.replace(/\D/g, '');
+
+const visible = rows.filter(o => {
+  const inView = mode === 'all' ||
+    (mode === 'archive' ? isArchived(o) : !isArchived(o));
+
+  const name = String(o.customer_name || '').toLowerCase();
+  const phone = String(o.phone || '');
+  const number = query.replace(/^(заказ\s*)?[№#]\s*/, '');
+
+  const matches = !query ||
+    String(o.id) === number ||
+    name.includes(query) ||
+    phone.toLowerCase().includes(query) ||
+    (digits.length >= 3 &&
+      phone.replace(/\D/g, '').includes(digits));
+
+  return inView && matches;
+});
 
   renderOrdersOriginal(visible);
 
@@ -613,7 +642,7 @@ renderOrders = function(rows) {
     ' · В архиве: ' + rows.filter(isArchived).length;
 
   if (!visible.length) {
-    $('orders').textContent = mode === 'archive'
+   $('orders').textContent = query ? 'Ничего не найдено' : mode === 'archive'
       ? 'Архив пока пуст'
       : mode === 'active'
         ? 'Заказов в работе нет'
