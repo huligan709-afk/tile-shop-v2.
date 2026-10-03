@@ -12,6 +12,7 @@
   "dependencies": {
     "express": "^4.21.2",
     "better-sqlite3": "^11.8.1",
-    "pg": "^8.13.3"
+   "pg": "^8.13.3",
+"exceljs": "4.4.0"
   }
 }
