@@ -561,7 +561,83 @@ $('editor').onsubmit=async e=>{
     $('save').disabled=false;
     $('cancel').disabled=false;
   }
+};// Рабочий список и архив заказов.
+let archiveOrders = [];
+const renderOrdersOriginal = renderOrders;
+
+renderOrders = function(rows) {
+  archiveOrders = rows;
+
+  if (!$('orderView')) {
+    const label = document.createElement('label');
+    label.textContent = 'Показать заказы';
+
+    const select = document.createElement('select');
+    select.id = 'orderView';
+
+    for (const [value, title] of [
+      ['active', 'В работе'],
+      ['archive', 'Архив'],
+      ['all', 'Все заказы']
+    ]) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = title;
+      select.appendChild(option);
+    }
+
+    label.appendChild(select);
+
+    const count = document.createElement('p');
+    count.id = 'orderViewCount';
+    count.className = 'muted';
+
+    $('orders').before(label, count);
+
+    select.onchange = () => renderOrders(archiveOrders);
+  }
+
+  const isArchived = o =>
+    ['Выполнен', 'Отменён'].includes(o.status);
+
+  const mode = $('orderView').value;
+  const visible = rows.filter(o =>
+    mode === 'all' ||
+    (mode === 'archive' ? isArchived(o) : !isArchived(o))
+  );
+
+  renderOrdersOriginal(visible);
+
+  $('orderViewCount').textContent =
+    'В работе: ' + rows.filter(o => !isArchived(o)).length +
+    ' · В архиве: ' + rows.filter(isArchived).length;
+
+  if (!visible.length) {
+    $('orders').textContent = mode === 'archive'
+      ? 'Архив пока пуст'
+      : mode === 'active'
+        ? 'Заказов в работе нет'
+        : 'Заказов пока нет';
+  }
 };
+
+// После сохранения статуса обновляем список.
+$('orders').addEventListener('change', async e => {
+  const select = e.target;
+  if (!select.matches('[data-order]')) return;
+
+  // Ждём завершения существующего обработчика сохранения.
+  while (select.disabled) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  const order = archiveOrders.find(o =>
+    String(o.id) === select.dataset.order
+  );
+
+  if (order) order.status = select.dataset.previous;
+  renderOrders(archiveOrders);
+});
 </script>
 </body>
 </html>
