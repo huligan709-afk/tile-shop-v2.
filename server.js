@@ -584,6 +584,29 @@ app.patch('/api/products/:id', admin, route(async (req, res) => {
   if (!result.rowCount) return res.status(404).json({ error: 'Товар не найден' });
   res.json({ ok: true });
 }));
+// Delete catalog rows only; order_items keeps historical names, prices and quantities.
+app.delete('/api/products', admin, route(async (req, res) => {
+  const { confirmation, expectedCount } = req.body || {};
+  if (confirmation !== 'УДАЛИТЬ') fail('Для удаления всех товаров введите УДАЛИТЬ');
+  if (!Number.isInteger(expectedCount) || expectedCount < 0) fail('Обновите список товаров');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('LOCK TABLE products IN SHARE ROW EXCLUSIVE MODE');
+    const { rows } = await client.query('SELECT COUNT(*)::int AS count FROM products');
+    if (rows[0].count !== expectedCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Количество товаров изменилось. Обновите список и повторите удаление.' });
+    }
+    const result = await client.query('DELETE FROM products');
+    // Do not reset the sequence: old order product IDs must never be reused.
+    await client.query('COMMIT');
+    res.json({ ok: true, deleted: result.rowCount });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally { client.release(); }
+}));
 app.delete('/api/products/:id', admin, route(async (req, res) => {
   const result = await pool.query('DELETE FROM products WHERE id=$1', [cleanInt(req.params.id)]);
   if (!result.rowCount) return res.status(404).json({ error: 'Товар не найден' });

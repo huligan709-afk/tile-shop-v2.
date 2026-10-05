@@ -15,6 +15,7 @@ input,textarea,select{width:100%;padding:12px;border:1px solid #ccd5df;border-ra
 button{padding:12px;border:0;border-radius:10px;background:#1683f5;color:white;font-weight:600;cursor:pointer}
 button:disabled{opacity:.5}
 .bar{display:flex;gap:10px;flex-wrap:wrap}
+.danger{background:#c62828}
 .secondary{background:#e8edf3;color:#172638}
 .muted{color:#637386}
 .notice{white-space:pre-wrap;margin:12px 0}
@@ -133,6 +134,8 @@ summary{cursor:pointer}
 <input id="search" type="search" placeholder="Название или категория">
 </label>
 <p id="count" class="muted"></p>
+<button id="deleteAll" type="button" class="danger">Удалить все товары</button>
+<p class="muted">Удаление необратимо. История заказов сохраняется.</p>
 <div id="products"></div>
 </section>
 </main>
@@ -157,6 +160,7 @@ let galleryPhoto='';
 let photoBusy=false;
 let photoVersion=0;
 let saving=false;
+let deleting=false;
 
 function imageField(){
   return $('editor').elements.namedItem('image');
@@ -198,7 +202,7 @@ $('importProducts').addEventListener('click', async () => {
   const message = $('importMsg');
   const file = input.files[0];
 
-  if (button.disabled) return;
+  if (button.disabled || deleting || saving) return;
 
   if (!file || !/\.xlsx$/i.test(file.name)) {
     message.textContent = 'Выберите файл .xlsx';
@@ -264,6 +268,7 @@ function renderProducts(){
     (p.name+' '+p.category).toLowerCase().includes(q)
   );
   $('count').textContent='Товаров: '+products.length;
+  $('deleteAll').disabled=deleting||saving||!products.length;
 
   $('products').innerHTML=rows.map(p=>`
     <article class="card">
@@ -277,7 +282,10 @@ function renderProducts(){
       <h3>${esc(p.name)}</h3>
       <p>${esc(p.category)}</p>
       <p><b>${money(p.price)}</b> · Остаток: ${esc(p.stock)} ${esc(p.unit)}</p>
+      <div class="bar">
       <button data-edit="${p.id}">Редактировать</button>
+      <button type="button" class="danger" data-delete="${p.id}">Удалить</button>
+      </div>
    <p>${p.is_active === false ? 'Скрыт с продажи' : 'В продаже'}</p>
 <button data-visibility="${p.id}" data-active="${p.is_active !== false}">
   ${p.is_active === false ? 'Вернуть в продажу' : 'Скрыть с продажи'}
@@ -288,7 +296,7 @@ $('products').addEventListener('click', async e => {
   const button = e.target.closest('[data-visibility]');
   if (!button) return;
   e.stopImmediatePropagation();
-  if (button.disabled) return;
+  if (button.disabled || deleting || saving) return;
 
   button.disabled = true;
   try {
@@ -511,19 +519,19 @@ $('login').onsubmit=e=>{
 };
 
 $('refresh').onclick=()=>{
-  if(!saving)load();
+  if(!saving&&!deleting)load();
 };
 
 $('add').onclick=()=>{
-  if(!saving)openEditor();
+  if(!saving&&!deleting)openEditor();
 };
 
 $('logout').onclick=()=>{
-  if(!saving)logout();
+  if(!saving&&!deleting)logout();
 };
 
 $('cancel').onclick=()=>{
-  if(!saving)closeEditor();
+  if(!saving&&!deleting)closeEditor();
 };
 
 $('search').oninput=renderProducts;
@@ -588,9 +596,51 @@ $('removePhoto').onclick=()=>{
     'Фото убрано. Нажмите «Сохранить товар».';
 };
 
+async function deleteProducts(id=null){
+  if(saving||deleting)return;
+  const all=id===null;
+  const product=products.find(p=>p.id===id);
+  if(all&&!products.length||!all&&!product)return;
+  if(all){
+    const answer=prompt('Удалить ВСЕ товары ('+products.length+')? История заказов сохранится.\nДля подтверждения введите УДАЛИТЬ.');
+    if(answer===null)return;
+    if(answer.trim()!=='УДАЛИТЬ'){
+      $('msg').textContent='Удаление отменено: введите УДАЛИТЬ для подтверждения.';
+      return;
+    }
+  }else if(!confirm('Удалить товар «'+product.name+'»? Это действие нельзя отменить. История заказов сохранится.')){
+    return;
+  }
+  deleting=true;
+  $('deleteAll').disabled=true;
+  for(const button of $('products').querySelectorAll('button'))button.disabled=true;
+  $('msg').textContent='Удаление…';
+  try{
+    const result=await api('/api/products'+(all?'':'/'+id),{
+      method:'DELETE',
+      ...(all?{body:JSON.stringify({confirmation:'УДАЛИТЬ',expectedCount:products.length})}:{})
+    });
+    if(all||editId===id)closeEditor();
+    products=all?[]:products.filter(p=>p.id!==id);
+    renderProducts();
+    await load();
+    $('msg').textContent=all?'Удалено товаров: '+result.deleted+'. Можно добавлять новые товары.':'Товар удалён';
+  }catch(err){
+    $('msg').textContent=err.message;
+  }finally{
+    deleting=false;
+    renderProducts();
+  }
+}
+$('deleteAll').onclick=()=>deleteProducts();
+$('products').addEventListener('click',e=>{
+  const button=e.target.closest('[data-delete]');
+  if(button&&!button.disabled)deleteProducts(Number(button.dataset.delete));
+});
+
 $('products').onclick=e=>{
   const button=e.target.closest('[data-edit]');
-  if(button&&!saving){
+  if(button&&!saving&&!deleting){
     openEditor(Number(button.dataset.edit));
   }
 };
@@ -620,7 +670,7 @@ $('orders').onchange=async e=>{
 
 $('editor').onsubmit=async e=>{
   e.preventDefault();
-  if(saving||photoBusy)return;
+  if(saving||deleting||photoBusy)return;
 
   const body=Object.fromEntries(new FormData($('editor')));
   body.image=galleryPhoto||body.image;
